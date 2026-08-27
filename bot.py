@@ -4,7 +4,7 @@
 import os, sys, json, time, threading, random, logging, requests
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 from config import *
 from database import *
@@ -153,6 +153,58 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await main_menu(update, context)
 
+# ---------- MESSAGE HANDLER FOR NUMBER INPUT ----------
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if is_banned(user_id):
+        await update.message.reply_text("🚫 You are banned.")
+        return
+    
+    if context.user_data.get('waiting_for') == 'bomb_number':
+        target = update.message.text.strip()
+        
+        if len(target) != 10 or not target.isdigit():
+            await update.message.reply_text("❌ Invalid number! Please enter a 10-digit number.")
+            return
+        
+        context.user_data['waiting_for'] = None
+        
+        coins = get_balance(user_id)
+        if coins < BOMB_COST:
+            await update.message.reply_text(f"❌ Insufficient credits!\n💰 Balance: {coins}\n💸 Cost: {BOMB_COST}\n\n💳 Buy credits from the menu.")
+            return
+        
+        if not deduct_coins(user_id, BOMB_COST, f"Bomb on +91{target}"):
+            await update.message.reply_text("❌ Failed to deduct credits.")
+            return
+        
+        stop_bombing[user_id] = False
+        current_target[user_id] = target
+        
+        await update.message.reply_text(
+            f"✅ **SMS Bombing Started on +91{target}!**\n"
+            f"📊 APIs: {len(SERVICES)}\n"
+            f"💰 Credits Left: {get_balance(user_id)}\n"
+            f"🛑 Type /stop to halt.",
+            parse_mode="Markdown"
+        )
+        
+        def run_bomb():
+            sent, success, failed = bomb_thread(target, MAX_SMS_PER_BOMB, user_id)
+            if stop_bombing.get(user_id, False):
+                update.message.reply_text(
+                    f"⛔ **Stopped!**\n📱 +91{target}\n📊 Sent: {sent}\n✅ Success: {success}\n❌ Failed: {failed}",
+                    parse_mode="Markdown"
+                )
+            else:
+                update.message.reply_text(
+                    f"✅ **Complete!**\n📱 +91{target}\n📊 Sent: {sent}\n✅ Success: {success}\n❌ Failed: {failed}",
+                    parse_mode="Markdown"
+                )
+        
+        threading.Thread(target=run_bomb, daemon=True).start()
+
 # ---------- CALLBACK HANDLER ----------
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -176,8 +228,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
         context.user_data['waiting_for'] = 'bomb_number'
-        context.user_data['message_id'] = query.message.message_id
-        context.user_data['chat_id'] = query.message.chat_id
     
     # ---------- VIDEOS ----------
     elif data == "videos":
@@ -410,58 +460,6 @@ async def main_menu_callback(query, user_id):
     
     await query.edit_message_text(msg, reply_markup=reply_markup, parse_mode="Markdown")
 
-# ---------- MESSAGE HANDLER ----------
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    if is_banned(user_id):
-        await update.message.reply_text("🚫 You are banned.")
-        return
-    
-    if context.user_data.get('waiting_for') == 'bomb_number':
-        target = update.message.text.strip()
-        
-        if len(target) != 10 or not target.isdigit():
-            await update.message.reply_text("❌ Invalid number! Please enter a 10-digit number.")
-            return
-        
-        context.user_data['waiting_for'] = None
-        
-        coins = get_balance(user_id)
-        if coins < BOMB_COST:
-            await update.message.reply_text(f"❌ Insufficient credits!\n💰 Balance: {coins}\n💸 Cost: {BOMB_COST}\n\n💳 Buy credits from the menu.")
-            return
-        
-        if not deduct_coins(user_id, BOMB_COST, f"Bomb on +91{target}"):
-            await update.message.reply_text("❌ Failed to deduct credits.")
-            return
-        
-        stop_bombing[user_id] = False
-        current_target[user_id] = target
-        
-        await update.message.reply_text(
-            f"✅ **SMS Bombing Started on +91{target}!**\n"
-            f"📊 APIs: {len(SERVICES)}\n"
-            f"💰 Credits Left: {get_balance(user_id)}\n"
-            f"🛑 Type /stop to halt.",
-            parse_mode="Markdown"
-        )
-        
-        def run_bomb():
-            sent, success, failed = bomb_thread(target, MAX_SMS_PER_BOMB, user_id)
-            if stop_bombing.get(user_id, False):
-                update.message.reply_text(
-                    f"⛔ **Stopped!**\n📱 +91{target}\n📊 Sent: {sent}\n✅ Success: {success}\n❌ Failed: {failed}",
-                    parse_mode="Markdown"
-                )
-            else:
-                update.message.reply_text(
-                    f"✅ **Complete!**\n📱 +91{target}\n📊 Sent: {sent}\n✅ Success: {success}\n❌ Failed: {failed}",
-                    parse_mode="Markdown"
-                )
-        
-        threading.Thread(target=run_bomb, daemon=True).start()
-
 # ---------- STOP COMMAND ----------
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -687,9 +685,9 @@ def main():
     app.add_handler(CommandHandler("unban", unban))
     app.add_handler(CommandHandler("createcode", createcode))
     
-    # Callback & Message handlers
+    # Callback & Message handlers (FIXED)
     app.add_handler(CallbackQueryHandler(callback_handler))
-    app.add_handler(MessageHandler(None, handle_message))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     print("=" * 50)
     print(f"🤖 {BOT_NAME}")

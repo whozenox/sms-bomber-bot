@@ -1,7 +1,7 @@
 # config.py
 
 # Telegram Bot Token
-BOT_TOKEN = "8996694548:AAH9I91qQ7d7A1xpNyYXWjt3YIuw9yjPd7s"
+BOT_TOKEN = "8996694548:AAF0ZA36jaUDkbkrKpcbqjxuppiX3YyyseY"
 
 # Admin ID (Your Telegram ID)
 ADMIN_ID = 8112149031

@@ -1,6 +1,6 @@
 # database.py
-# ZeNoX BOMBER - Database System
-# (c) @lordzenox | @zenoxtool | @ghostpyo
+# ULTIMATE BOMBER BOT - DATABASE SYSTEM
+# (c) @lordzenox | @zenoxtool
 
 import sqlite3
 import random
@@ -8,6 +8,10 @@ import string
 from datetime import datetime, timedelta
 
 DB_NAME = 'zenox_bomber.db'
+
+# ============================================================
+# INITIALIZE DATABASE
+# ============================================================
 
 def init_db():
     """Initialize database with all tables"""
@@ -83,6 +87,7 @@ def init_db():
     
     conn.commit()
     conn.close()
+    print("✅ Database initialized successfully!")
 
 
 # ============================================================
@@ -145,15 +150,15 @@ def create_user(user_id, username, first_name, referral_code=None):
     c.execute('''INSERT INTO users 
         (user_id, username, first_name, coins, referral_code, referred_by, join_date, last_active)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
-        (user_id, username or first_name, first_name, 5, ref_code, referred_by, 
+        (user_id, username or first_name, first_name, FREE_COINS, ref_code, referred_by, 
          datetime.now().isoformat(), datetime.now().isoformat()))
     
     # Referral bonus
     if referred_by:
-        c.execute("UPDATE users SET coins = coins + 5 WHERE user_id = ?", (referred_by,))
+        c.execute("UPDATE users SET coins = coins + ? WHERE user_id = ?", (REFERRAL_BONUS, referred_by))
         c.execute('''INSERT INTO transactions (user_id, amount, type, description, date)
             VALUES (?, ?, ?, ?, ?)''',
-            (referred_by, 5, 'credit', f'Referral bonus from {username}', datetime.now().isoformat()))
+            (referred_by, REFERRAL_BONUS, 'credit', f'Referral bonus from {username}', datetime.now().isoformat()))
         c.execute('''INSERT INTO referrals (referrer_id, referred_id, date)
             VALUES (?, ?, ?)''',
             (referred_by, user_id, datetime.now().isoformat()))
@@ -539,4 +544,3 @@ def cleanup_inactive_users(days=90):
 # ============================================================
 
 init_db()
-print("✅ Database initialized successfully!")

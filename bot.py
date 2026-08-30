@@ -153,6 +153,99 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(msg, reply_markup=reply_markup, parse_mode="Markdown")
 
+# ========== ADMIN PANEL ==========
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Unauthorized! Only admin can access.")
+        return
+    
+    users = get_all_users(limit=30)
+    
+    if not users:
+        await update.message.reply_text("📊 No users found.")
+        return
+    
+    msg = "🔐 **ADMIN PANEL**\n"
+    msg += "═" * 35 + "\n\n"
+    msg += "👥 **ACTIVE USERS**\n"
+    msg += "─────────────────────\n"
+    msg += "`# | ID | Username | Coins | Bombs | Status`\n"
+    msg += "─────────────────────\n"
+    
+    count = 1
+    for uid, username, coins, bombs, sms in users[:20]:
+        if is_admin(uid):
+            role = "👑 ADMIN"
+        elif is_banned(uid):
+            role = "🚫 BANNED"
+        else:
+            role = "✅ USER"
+        uname = username[:12] if username else "Unknown"
+        msg += f"`{count:2} | {uid} | {uname} | {coins:3} | {bombs:3} | {role}`\n"
+        count += 1
+    
+    msg += "\n─────────────────────\n"
+    stats = get_total_stats()
+    msg += f"📊 **Total Users:** {stats['users']}\n"
+    msg += f"💰 **Total Coins:** {stats['coins']}\n"
+    msg += f"💣 **Total Bombs:** {stats['bombs']}\n"
+    msg += f"📱 **Total SMS:** {stats['sms']}\n"
+    
+    keyboard = [
+        [InlineKeyboardButton("📊 FULL STATS", callback_data="admin_stats")],
+        [InlineKeyboardButton("👥 ALL USERS", callback_data="admin_users")],
+        [InlineKeyboardButton("🔙 BACK", callback_data="back_main")],
+    ]
+    await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+# ========== ADMIN CALLBACKS ==========
+async def admin_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    if user_id != ADMIN_ID:
+        await query.edit_message_text("❌ Unauthorized!")
+        return
+    stats = get_total_stats()
+    msg = f"📊 **FULL STATISTICS**\n═" * 30 + "\n\n"
+    msg += f"👥 **Total Users:** {stats['users']}\n"
+    msg += f"💰 **Total Coins:** {stats['coins']}\n"
+    msg += f"💣 **Total Bombs:** {stats['bombs']}\n"
+    msg += f"📱 **Total SMS:** {stats['sms']}\n"
+    msg += f"👑 **Admins:** {stats['admins']}\n"
+    msg += f"🚫 **Banned:** {stats['banned']}\n"
+    msg += f"📡 **APIs:** {len(SERVICES)}\n"
+    keyboard = [[InlineKeyboardButton("🔙 BACK", callback_data="admin_back")]]
+    await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+async def admin_users_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    if user_id != ADMIN_ID:
+        await query.edit_message_text("❌ Unauthorized!")
+        return
+    users = get_all_users(limit=50)
+    if not users:
+        await query.edit_message_text("📊 No users found.")
+        return
+    msg = "👥 **ALL USERS**\n═" * 30 + "\n\n"
+    for uid, username, coins, bombs, sms in users[:50]:
+        uname = username[:15] if username else "Unknown"
+        role = "👑" if is_admin(uid) else "🚫" if is_banned(uid) else "👤"
+        msg += f"{role} `{uid}` | **{uname}** | 💰{coins} | 💣{bombs}\n"
+    msg += "\n─────────────────────\n"
+    msg += f"📊 Showing {min(50, len(users))} users"
+    keyboard = [[InlineKeyboardButton("🔙 BACK", callback_data="admin_back")]]
+    await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+async def admin_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await admin(update, context)
+
 # ========== CALLBACK HANDLER ==========
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -246,6 +339,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = query.from_user.id
         stop_bombing[user_id] = True
         await query.edit_message_text("🛑 **Bombing Stopped!**", parse_mode="Markdown")
+    
+    elif data == "admin_stats":
+        await admin_stats_callback(update, context)
+    elif data == "admin_users":
+        await admin_users_callback(update, context)
+    elif data == "admin_back":
+        await admin_back_callback(update, context)
 
 async def speed_selected(query, context):
     user_id = query.from_user.id
@@ -284,7 +384,6 @@ async def start_bombing_process(query, context, count):
     speed = context.user_data.get('speed', 'medium')
     msg_text = context.user_data.get('msg', '')
     
-    # Check credits
     coins = get_balance(user_id)
     if coins < BOMB_COST:
         await query.edit_message_text(
@@ -318,7 +417,6 @@ async def start_bombing_process(query, context, count):
     
     def run_bomb():
         sent, success, failed = bomb_thread(phone, count, user_id)
-        
         if stop_bombing.get(user_id, False):
             final_msg = f"""⛔ **STOPPED!**
 
@@ -339,7 +437,6 @@ async def start_bombing_process(query, context, count):
 📝 Message: {msg_text if msg_text else 'None'}
 
 📢 {CHANNEL1} | {CHANNEL2}"""
-        
         try:
             query.edit_message_text(final_msg, parse_mode="Markdown")
         except:
@@ -364,7 +461,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             phone = phone[-10:]
             context.user_data['phone'] = phone
             context.user_data['step'] = 'message'
-            
             await update.message.reply_text(
                 f"✅ **Number:** +91{phone}\n\n"
                 "**STEP 2/4 – MESSAGE**\n"
@@ -380,11 +476,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['msg'] = ''
         else:
             context.user_data['msg'] = text
-        
         context.user_data['step'] = 'speed'
-        
         msg = f"""**STEP 3/4 – SPEED**
-
 Sending speed select karein:"""
         keyboard = [
             [InlineKeyboardButton("🚀 FAST", callback_data="speed_fast")],
@@ -396,10 +489,8 @@ Sending speed select karein:"""
     elif step == 'custom_count':
         try:
             count = int(text)
-            if count < 1:
-                raise ValueError
-            if count > 5000:
-                await update.message.reply_text("❌ Max 5000 SMS allowed.")
+            if count < 1 or count > 5000:
+                await update.message.reply_text("❌ Enter 1-5000.")
                 return
             context.user_data['step'] = None
             await start_bombing_direct(update, context, count)
@@ -418,9 +509,7 @@ async def start_bombing_direct(update, context, count):
     coins = get_balance(user_id)
     if coins < BOMB_COST:
         await update.message.reply_text(
-            f"❌ **Insufficient Credits!**\n"
-            f"💰 Your Balance: {coins}\n"
-            f"💸 Cost per bomb: {BOMB_COST} credits",
+            f"❌ **Insufficient Credits!**\n💰 Balance: {coins}\n💸 Cost: {BOMB_COST}",
             parse_mode="Markdown"
         )
         return
@@ -430,25 +519,15 @@ async def start_bombing_direct(update, context, count):
         return
     
     stop_bombing[user_id] = False
-    
-    msg = f"""🔄 **SENDING SMS...**
-
-📱 Target: +91{phone}
-📊 Count: {count}
-⚡ Speed: {speed.upper()}
-📝 Message: {msg_text if msg_text else 'None'}
-
-📊 Progress: 0% | SENT: 0 | FAILED: 0
-
-🛑 Type /stop to stop."""
-    
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    await update.message.reply_text(
+        f"🔄 **SENDING SMS...**\n📱 +91{phone}\n📊 {count} SMS\n⚡ {speed.upper()}\n🛑 Type /stop to stop.",
+        parse_mode="Markdown"
+    )
     
     def run_bomb():
         sent, success, failed = bomb_thread(phone, count, user_id)
         final_msg = f"""✅ **SMS SENT!**
-
-📱 Target: +91{phone}
+📱 +91{phone}
 📊 Sent: {sent}
 ✅ Success: {success}
 ❌ Failed: {failed}
@@ -467,14 +546,12 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ========== HELP COMMAND ==========
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = """📌 **Available Commands:**
-
-/start - Start the bot
+/start - Start bot
 /stop - Stop bombing
-/balance - Check your credits
-/help - Show this help
+/balance - Check credits
+/help - Show help
 /status - Bot status
-
-📢 **Channels:** @zenoxtool | @Dev_Null_X_NODE_JS"""
+/admin - Admin panel (admin only)"""
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 # ========== BALANCE COMMAND ==========
@@ -486,13 +563,51 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ========== STATUS COMMAND ==========
 async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = f"""📊 **Bot Status**
-
-🤖 **Bot:** {BOT_NAME}
-📡 **APIs:** {len(SERVICES)}
-👑 **Owner:** {OWNER}
-📢 **Channels:** {CHANNEL1} | {CHANNEL2}
-⏰ **Uptime:** Online"""
+🤖 {BOT_NAME}
+📡 APIs: {len(SERVICES)}
+👑 Owner: {OWNER}
+📢 {CHANNEL1} | {CHANNEL2}
+⏰ Online"""
     await update.message.reply_text(msg, parse_mode="Markdown")
+
+# ========== ADDCOINS COMMAND ==========
+async def addcoins(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Unauthorized!")
+        return
+    if len(context.args) != 2:
+        await update.message.reply_text("❌ Usage: `/addcoins <user_id> <amount>`", parse_mode="Markdown")
+        return
+    try:
+        target_id = int(context.args[0])
+        amount = int(context.args[1])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid input!")
+        return
+    add_coins(target_id, amount, f"Admin added {amount} credits")
+    await update.message.reply_text(f"✅ Added **{amount}** credits to `{target_id}`", parse_mode="Markdown")
+
+# ========== BROADCAST COMMAND ==========
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Unauthorized!")
+        return
+    if not context.args:
+        await update.message.reply_text("❌ Usage: `/broadcast <message>`", parse_mode="Markdown")
+        return
+    message = " ".join(context.args)
+    users = get_all_users()
+    sent = 0
+    for uid, username, coins, bombs, sms in users:
+        try:
+            await context.bot.send_message(uid, f"📢 **Announcement**\n\n{message}", parse_mode="Markdown")
+            sent += 1
+            time.sleep(0.05)
+        except:
+            pass
+    await update.message.reply_text(f"✅ Broadcast sent to {sent} users")
 
 # ========== MAIN ==========
 def main():
@@ -500,12 +615,17 @@ def main():
     
     app = Application.builder().token(BOT_TOKEN).build()
     
+    # Commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("balance", balance))
     app.add_handler(CommandHandler("status", status_cmd))
+    app.add_handler(CommandHandler("admin", admin))
+    app.add_handler(CommandHandler("addcoins", addcoins))
+    app.add_handler(CommandHandler("broadcast", broadcast))
     
+    # Callbacks & Messages
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     

@@ -12,7 +12,7 @@ BOT_TOKEN = "8996694548:AAF0ZA36jaUDkbkrKpcbqjxuppiX3YyyseY"   # <--- APNA TOKEN
 # 👑 ADMIN ID
 # ========================================
 # Apna Telegram User ID daalo (Admin banne ke liye)
-ADMIN_ID = 8112149031,8100453801,   # <--- APNA ID DAALO
+ADMIN_ID = 8112149031,   # <--- APNA ID DAALO
 
 # ========================================
 # 📢 CHANNELS & CREDITS

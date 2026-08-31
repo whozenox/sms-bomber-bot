@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# ULTIMATE BOMBER BOT - COMPLETE WORKING
+# ULTIMATE BOMBER BOT - COMPLETE UI
 # (c) @lordzenox | @zenoxtool
 
 import os, sys, json, time, random, threading, logging, requests, concurrent.futures
@@ -15,6 +15,7 @@ CHANNEL1 = "@zenoxtool"
 CHANNEL2 = "@Dev_Null_X_NODE_JS"
 BOT_NAME = "ZeNoX BOMBER"
 BOT_VERSION = "v4.0"
+REFERRAL_BONUS = 5
 BOMB_COST = 2
 FREE_COINS = 5
 MAX_SMS_PER_BOMB = 500
@@ -40,7 +41,7 @@ def load_services():
 SERVICES = load_services()
 print(f"✅ Loaded {len(SERVICES)} services")
 
-# ========== DATABASE FUNCTIONS (EMBEDDED) ==========
+# ========== DATABASE (EMBEDDED) ==========
 import sqlite3, random, string
 from datetime import datetime, timedelta
 
@@ -69,6 +70,10 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE,
         amount INTEGER, used_by INTEGER DEFAULT 0, is_used INTEGER DEFAULT 0,
         created_by INTEGER, created_date TEXT, expiry_date TEXT
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS referrals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, referrer_id INTEGER,
+        referred_id INTEGER, coins_earned INTEGER DEFAULT 5, date TEXT
     )''')
     conn.commit()
     conn.close()
@@ -200,6 +205,60 @@ def get_total_stats():
     conn.close()
     return {'users': total_users, 'coins': total_coins, 'bombs': total_bombs, 'sms': total_sms}
 
+def get_referral_code(user_id):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT referral_code FROM users WHERE user_id = ?", (user_id,))
+    result = c.fetchone()
+    conn.close()
+    return result[0] if result else None
+
+def get_referral_count(user_id):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM users WHERE referred_by = ?", (user_id,))
+    count = c.fetchone()[0]
+    conn.close()
+    return count
+
+def get_bomb_logs(user_id, limit=10):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT target, sms_count, success, failed, date FROM bomb_logs WHERE user_id = ? ORDER BY date DESC LIMIT ?",
+              (user_id, limit))
+    logs = c.fetchall()
+    conn.close()
+    return logs
+
+def use_redeem_code(user_id, code):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT * FROM redeem_codes WHERE code = ? AND is_used = 0", (code,))
+    code_data = c.fetchone()
+    if not code_data:
+        conn.close()
+        return False, "❌ Invalid or expired code"
+    if code_data[7] and datetime.now().isoformat() > code_data[7]:
+        conn.close()
+        return False, "❌ Code expired"
+    c.execute("UPDATE redeem_codes SET is_used = 1, used_by = ? WHERE code = ?", (user_id, code))
+    amount = code_data[2]
+    add_coins(user_id, amount, f"Redeemed code: {code}")
+    conn.commit()
+    conn.close()
+    return True, f"✅ Successfully redeemed {amount} coins"
+
+def create_redeem_code(code, amount, created_by):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute('''INSERT INTO redeem_codes (code, amount, created_by, created_date, expiry_date)
+        VALUES (?, ?, ?, ?, ?)''',
+        (code, amount, created_by, datetime.now().isoformat(),
+         (datetime.now() + timedelta(days=365)).isoformat()))
+    conn.commit()
+    conn.close()
+    return True
+
 make_admin(ADMIN_ID)
 
 # ========== BOMBING ENGINE ==========
@@ -277,7 +336,7 @@ def bomb_thread(phone, total, user_id):
 # ========== TELEGRAM BOT ==========
 app = Application.builder().token(BOT_TOKEN).build()
 
-# ========== START COMMAND ==========
+# ========== START ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user = update.effective_user
@@ -294,6 +353,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     stats = get_user_stats(user_id)
     coins = get_balance(user_id)
+    ref_count = get_referral_count(user_id)
 
     msg = f"""🔥 **{BOT_NAME}**
 💀 **ULTIMATE SMS BOMBER {BOT_VERSION}**
@@ -311,8 +371,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 💀 **TAP START TO BEGIN**"""
 
     keyboard = [
-        [InlineKeyboardButton("🚀 START BOMBING", callback_data="start_bombing")],
-        [InlineKeyboardButton("📊 APIS", callback_data="apis")],
+        [InlineKeyboardButton("💣 SEND SMS", callback_data="send_sms")],
+        [InlineKeyboardButton("📹 VIDEOS", callback_data="videos"),
+         InlineKeyboardButton("💰 CREDITS", callback_data="credits")],
+        [InlineKeyboardButton("🎁 REDEEM", callback_data="redeem"),
+         InlineKeyboardButton("🔗 REFER", callback_data="refer")],
+        [InlineKeyboardButton("📊 STATS", callback_data="stats"),
+         InlineKeyboardButton("📜 MY SMS HISTORY", callback_data="history")],
+        [InlineKeyboardButton("💳 BUY CREDITS", callback_data="buy_credits"),
+         InlineKeyboardButton("🔄 TRANSFER CREDITS", callback_data="transfer")],
         [InlineKeyboardButton("ℹ️ INFO", callback_data="info")],
     ]
     await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
@@ -321,13 +388,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ Unauthorized!")
+        await update.message.reply_text("❌ Unauthorized! Only admin can access.")
         return
     users = get_all_users(limit=30)
     if not users:
         await update.message.reply_text("📊 No users found.")
         return
-    msg = "🔐 **ADMIN PANEL**\n═" * 35 + "\n\n👥 **ACTIVE USERS**\n─────────────────────\n`# | ID | Username | Coins | Bombs | Status`\n─────────────────────\n"
+    msg = "🔐 **ADMIN PANEL**\n"
+    msg += "═" * 35 + "\n\n"
+    msg += "👥 **ACTIVE USERS**\n"
+    msg += "─────────────────────\n"
+    msg += "`# | ID | Username | Coins | Bombs | Status`\n"
+    msg += "─────────────────────\n"
     count = 1
     for uid, username, coins, bombs, sms in users[:20]:
         role = "👑 ADMIN" if is_admin(uid) else "🚫 BANNED" if is_banned(uid) else "✅ USER"
@@ -335,7 +407,11 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += f"`{count:2} | {uid} | {uname} | {coins:3} | {bombs:3} | {role}`\n"
         count += 1
     stats = get_total_stats()
-    msg += f"\n📊 **Total Users:** {stats['users']}\n💰 **Total Coins:** {stats['coins']}\n💣 **Total Bombs:** {stats['bombs']}\n📱 **Total SMS:** {stats['sms']}"
+    msg += "\n─────────────────────\n"
+    msg += f"📊 **Total Users:** {stats['users']}\n"
+    msg += f"💰 **Total Coins:** {stats['coins']}\n"
+    msg += f"💣 **Total Bombs:** {stats['bombs']}\n"
+    msg += f"📱 **Total SMS:** {stats['sms']}\n"
     keyboard = [[InlineKeyboardButton("🔙 BACK", callback_data="back_main")]]
     await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
@@ -351,31 +427,166 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data
 
-    if data == "start_bombing":
+    if data == "send_sms":
         context.user_data['step'] = 'number'
         await query.edit_message_text(
             "📱 **STEP 1/4 – NUMBER**\n\nJis number pe SMS bhejna hai woh enter karo:\n*Example:* +919876543210\n\n⏳ Send the number in 60 seconds.",
             parse_mode="Markdown"
         )
 
-    elif data == "apis":
-        await query.edit_message_text(f"📊 **APIs Loaded:** {len(SERVICES)}", parse_mode="Markdown")
+    elif data == "videos":
+        await query.edit_message_text(
+            f"📹 **Video Tutorials**\n\n📢 More videos on channel:\n{CHANNEL1}",
+            parse_mode="Markdown"
+        )
+        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="back_main")]]
+        await query.edit_message_reply_markup(InlineKeyboardMarkup(keyboard))
+
+    elif data == "credits":
+        coins = get_balance(user_id)
+        stats = get_user_stats(user_id)
+        ref_count = get_referral_count(user_id)
+        msg = f"""💰 **Your Credits**
+
+💳 **Balance:** {coins} credits
+💣 **Bombs Used:** {stats['total_bombs']}
+📱 **SMS Sent:** {stats['total_sms']}
+👤 **Referrals:** {ref_count}
+🎁 **Bonus Earned:** {ref_count * REFERRAL_BONUS}"""
+        keyboard = [
+            [InlineKeyboardButton("🔗 Refer & Earn", callback_data="refer")],
+            [InlineKeyboardButton("💳 Buy Credits", callback_data="buy_credits")],
+            [InlineKeyboardButton("🔙 Back", callback_data="back_main")],
+        ]
+        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+    elif data == "redeem":
+        await query.edit_message_text(
+            "🎁 **Redeem Code**\n\nApna redeem code yahan type karo:\n`/redeem <code>`\n\nExample: `/redeem TEST123`\n\n📌 Code @lordzenox se lo.",
+            parse_mode="Markdown"
+        )
+        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="back_main")]]
+        await query.edit_message_reply_markup(InlineKeyboardMarkup(keyboard))
+
+    elif data == "refer":
+        ref_code = get_referral_code(user_id)
+        if not ref_code:
+            await query.edit_message_text("❌ Error getting referral code.")
+            return
+        bot_username = (await context.bot.get_me()).username
+        ref_link = f"https://t.me/{bot_username}?start={ref_code}"
+        ref_count = get_referral_count(user_id)
+        msg = f"""🔗 **Refer & Earn**
+
+👤 **Your Referral Link:**
+`{ref_link}`
+
+📊 **Total Referrals:** {ref_count}
+💰 **Coins Earned:** {ref_count * REFERRAL_BONUS}"""
+        keyboard = [
+            [InlineKeyboardButton("📤 Share", url=f"https://t.me/share/url?url={ref_link}&text=🔥 Join {BOT_NAME}!")],
+            [InlineKeyboardButton("🔙 Back", callback_data="back_main")],
+        ]
+        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+    elif data == "stats":
+        stats = get_user_stats(user_id)
+        coins = get_balance(user_id)
+        msg = f"""📊 **Your Statistics**
+
+👑 **Role:** {'ADMIN' if user_id == ADMIN_ID else 'FREE USER'}
+💰 **Credits:** {coins}
+💣 **Total Bombs:** {stats['total_bombs']}
+📱 **SMS Sent:** {stats['total_sms']}
+📡 **APIs:** {len(SERVICES)}
+👤 **Referrals:** {get_referral_count(user_id)}"""
+        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="back_main")]]
+        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+    elif data == "history":
+        logs = get_bomb_logs(user_id)
+        if not logs:
+            await query.edit_message_text("📜 **No SMS History**")
+            keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="back_main")]]
+            await query.edit_message_reply_markup(InlineKeyboardMarkup(keyboard))
+            return
+        msg = "📜 **My SMS History**\n\n"
+        for target, sms, success, failed, date in logs[:5]:
+            date_short = date[:16]
+            msg += f"📱 +91{target}\n   📊 {sms} SMS | ✅ {success}\n   🕐 {date_short}\n\n"
+        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="back_main")]]
+        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+    elif data == "buy_credits":
+        msg = f"""💳 **Buy Credits**
+
+👤 **Owner:** {OWNER}
+
+💎 **Credit Prices:**
+• **20 credits** - ₹40
+• **50 credits** - ₹100
+• **100 credits** - ₹190
+• **250 credits** - ₹450
+• **500 credits** - ₹850
+• **1000 credits** - ₹1600
+• **2500 credits** - ₹3750
+• **5000 credits** - ₹7000
+
+📩 Click below to contact owner!"""
+        keyboard = [
+            [InlineKeyboardButton("👤 Contact Owner", url="https://t.me/lordzenox")],
+            [InlineKeyboardButton("🔙 Back", callback_data="back_main")],
+        ]
+        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+    elif data == "transfer":
+        await query.edit_message_text(
+            "🔄 **Transfer Credits**\n\nUsage: `/transfer <user_id> <amount>`",
+            parse_mode="Markdown"
+        )
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="back_main")]]
         await query.edit_message_reply_markup(InlineKeyboardMarkup(keyboard))
 
     elif data == "info":
-        msg = f"""ℹ️ **About {BOT_NAME}**\n\n💀 **Version:** {BOT_VERSION}\n👑 **Owner:** {OWNER}\n📡 **APIs:** {len(SERVICES)}\n📢 **Channels:** {CHANNEL1} | {CHANNEL2}\n\n⚠️ **Disclaimer:** For educational purposes only."""
-        await query.edit_message_text(msg, parse_mode="Markdown")
+        msg = f"""ℹ️ **About {BOT_NAME}**
+
+💀 **Version:** {BOT_VERSION}
+👑 **Owner:** {OWNER}
+📡 **APIs:** {len(SERVICES)}
+📢 **Channels:** {CHANNEL1} | {CHANNEL2}
+
+⚠️ **Disclaimer:** For educational purposes only."""
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="back_main")]]
-        await query.edit_message_reply_markup(InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     elif data == "back_main":
         stats = get_user_stats(user_id)
         coins = get_balance(user_id)
-        msg = f"""🔥 **{BOT_NAME}**\n💀 **ULTIMATE SMS BOMBER {BOT_VERSION}**\n\n👑 **Owner:** {OWNER}\n\n- **ROLE**: {'ADMIN' if user_id == ADMIN_ID else 'FREE USER'}\n- **CREDITS**: **{coins}**\n- **USES**: **{stats['total_bombs']}**\n- **APIS**: **{len(SERVICES)}**\n- **SCANNER**: **{stats['total_sms']} DEVICES**\n\n📢 **Channels:** {CHANNEL1} | {CHANNEL2}\n\n💀 **TAP START TO BEGIN**"""
+        ref_count = get_referral_count(user_id)
+        msg = f"""🔥 **{BOT_NAME}**
+💀 **ULTIMATE SMS BOMBER {BOT_VERSION}**
+
+👑 **Owner:** {OWNER}
+
+- **ROLE**: {'ADMIN' if user_id == ADMIN_ID else 'FREE USER'}
+- **CREDITS**: **{coins}**
+- **USES**: **{stats['total_bombs']}**
+- **APIS**: **{len(SERVICES)}**
+- **SCANNER**: **{stats['total_sms']} DEVICES**
+
+📢 **Channels:** {CHANNEL1} | {CHANNEL2}
+
+💀 **TAP START TO BEGIN**"""
         keyboard = [
-            [InlineKeyboardButton("🚀 START BOMBING", callback_data="start_bombing")],
-            [InlineKeyboardButton("📊 APIS", callback_data="apis")],
+            [InlineKeyboardButton("💣 SEND SMS", callback_data="send_sms")],
+            [InlineKeyboardButton("📹 VIDEOS", callback_data="videos"),
+             InlineKeyboardButton("💰 CREDITS", callback_data="credits")],
+            [InlineKeyboardButton("🎁 REDEEM", callback_data="redeem"),
+             InlineKeyboardButton("🔗 REFER", callback_data="refer")],
+            [InlineKeyboardButton("📊 STATS", callback_data="stats"),
+             InlineKeyboardButton("📜 MY SMS HISTORY", callback_data="history")],
+            [InlineKeyboardButton("💳 BUY CREDITS", callback_data="buy_credits"),
+             InlineKeyboardButton("🔄 TRANSFER CREDITS", callback_data="transfer")],
             [InlineKeyboardButton("ℹ️ INFO", callback_data="info")],
         ]
         await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
@@ -552,7 +763,7 @@ async def start_bombing_direct(update, context, count):
 
     threading.Thread(target=run_bomb, daemon=True).start()
 
-# ========== OTHER COMMANDS ==========
+# ========== COMMANDS ==========
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     stop_bombing[user_id] = True
@@ -564,12 +775,41 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"💰 **Your Balance:** {coins} credits", parse_mode="Markdown")
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = """📌 **Available Commands:**\n\n/start - Start bot\n/stop - Stop bombing\n/balance - Check credits\n/help - Show help\n/status - Bot status\n/admin - Admin panel (admin only)"""
+    msg = """📌 **Available Commands:**\n\n/start - Start bot\n/stop - Stop bombing\n/balance - Check credits\n/help - Show help\n/status - Bot status\n/admin - Admin panel (admin only)\n/redeem <code> - Redeem code"""
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = f"""📊 **Bot Status**\n\n🤖 {BOT_NAME}\n📡 APIs: {len(SERVICES)}\n👑 Owner: {OWNER}\n📢 {CHANNEL1} | {CHANNEL2}\n⏰ Online"""
     await update.message.reply_text(msg, parse_mode="Markdown")
+
+async def redeem_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if is_banned(user_id):
+        await update.message.reply_text("🚫 You are banned.")
+        return
+    if len(context.args) != 1:
+        await update.message.reply_text("❌ Usage: `/redeem <code>`", parse_mode="Markdown")
+        return
+    code = context.args[0]
+    success, msg = use_redeem_code(user_id, code)
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+async def transfer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if is_banned(user_id):
+        await update.message.reply_text("🚫 You are banned.")
+        return
+    if len(context.args) != 2:
+        await update.message.reply_text("❌ Usage: `/transfer <user_id> <amount>`", parse_mode="Markdown")
+        return
+    try:
+        target_id = int(context.args[0])
+        amount = int(context.args[1])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid input!")
+        return
+    # Transfer logic (database mein function hona chahiye)
+    await update.message.reply_text("🔄 Transfer feature coming soon.")
 
 async def addcoins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -608,6 +848,23 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
     await update.message.reply_text(f"✅ Broadcast sent to {sent} users")
 
+async def createcode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ Unauthorized!")
+        return
+    if len(context.args) != 2:
+        await update.message.reply_text("❌ Usage: `/createcode <code> <amount>`", parse_mode="Markdown")
+        return
+    code = context.args[0]
+    try:
+        amount = int(context.args[1])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid amount!")
+        return
+    create_redeem_code(code, amount, user_id)
+    await update.message.reply_text(f"✅ Redeem code `{code}` created!", parse_mode="Markdown")
+
 # ========== MAIN ==========
 if __name__ == "__main__":
     app.add_handler(CommandHandler("start", start))
@@ -618,6 +875,9 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("admin", admin))
     app.add_handler(CommandHandler("addcoins", addcoins))
     app.add_handler(CommandHandler("broadcast", broadcast))
+    app.add_handler(CommandHandler("redeem", redeem_cmd))
+    app.add_handler(CommandHandler("transfer", transfer))
+    app.add_handler(CommandHandler("createcode", createcode))
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 

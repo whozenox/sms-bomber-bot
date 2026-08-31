@@ -2,7 +2,7 @@
 BOT_TOKEN = "8996694548:AAF0ZA36jaUDkbkrKpcbqjxuppiX3YyyseY"
 
 # ===== MULTIPLE ADMIN IDs (LIST) =====
-ADMIN_IDS = [8112149031, 8100453801]   # <--- APNE IDS DAALO
+ADMIN_IDS = [8112149031]   # <--- APNE IDS DAALO
 
 OWNER = "@lordzenox"
 CHANNEL1 = "@zenoxtool"

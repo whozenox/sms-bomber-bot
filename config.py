@@ -9,7 +9,7 @@ BOT_TOKEN = "8996694548:AAF0ZA36jaUDkbkrKpcbqjxuppiX3YyyseY"
 # ========================================
 # 👑 MULTIPLE ADMIN IDs (LIST)
 # ========================================
-ADMIN_IDS = [8112149031, 8100453801]   # <--- DONO ID ADD KAR DIYA
+ADMIN_IDS = [8112149031, 8100453801, 8516396107]   # <--- DONO ID ADD KAR DIYA
 
 # ========================================
 # 📢 CHANNELS & CREDITS

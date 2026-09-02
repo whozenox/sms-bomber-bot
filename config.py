@@ -1,5 +1,5 @@
 # config.py
-# ULTIMATE SMS BOMBER BOT - CONFIGURATION
+# ULTIMATE SMS BOMBER BOT - FINAL
 
 import os
 from dotenv import load_dotenv
@@ -23,25 +23,57 @@ ADMIN_IDS = [int(x.strip()) for x in os.getenv('ADMIN_IDS', '').split(',') if x.
 BOT_NAME = "💣 SMS BOMBER"
 VERSION = "v6.0"
 OWNER = "@lordzenox"
-CHANNEL1 = "@Dev/_Null/_X/_NODE/_JS"
-CHANNEL2 = "@zenoxtool"
+CHANNEL1 = "@zenoxtool"
+CHANNEL2 = "@Dev_Null_X_NODE_JS"
 
 # ========================================
-# 💰 COIN SYSTEM
+# 💰 COIN SYSTEM - ONLY 3 OPTIONS
 # ========================================
-BOMB_COST = int(os.getenv('BOMB_COST', 1))  # Per SMS cost
-FREE_COINS = int(os.getenv('FREE_COINS', 10))
-REFERRAL_BONUS = int(os.getenv('REFERRAL_BONUS', 10))
-MAX_SMS_LIMIT = int(os.getenv('MAX_SMS_LIMIT', 10000))
-MIN_BOMB_COUNT = 1
-MAX_BOMB_COUNT = 10000
+FREE_COINS = 11
+REFERRAL_BONUS = 10
+MAX_SMS_LIMIT = 10000
+
+# Pricing - Only 3 Options
+BOMB_PRICES = {
+    200: 2,
+    500: 5,
+    'unlimited': 8
+}
+
+def get_price(count):
+    if count == MAX_SMS_LIMIT:
+        return BOMB_PRICES['unlimited']
+    return BOMB_PRICES.get(count, 2)
 
 # ========================================
-# ⚙️ API SETTINGS
+# ⚙️ SPEED SETTINGS - 3 OPTIONS
 # ========================================
-API_TIMEOUT = 5
-REQUEST_DELAY = 0.2
-MAX_APIS_PER_BOMB = 300
+SPEED_SETTINGS = {
+    'slow': {
+        'delay': 0.05,
+        'timeout': 3,
+        'apis': 300,
+        'label': '🐢 SLOW',
+        'description': 'Stable & Safe',
+        'emoji': '🐢'
+    },
+    'medium': {
+        'delay': 0.02,
+        'timeout': 2,
+        'apis': 500,
+        'label': '⚡ MEDIUM',
+        'description': 'Balanced Speed',
+        'emoji': '⚡'
+    },
+    'fast': {
+        'delay': 0.005,
+        'timeout': 1,
+        'apis': 800,
+        'label': '🚀 FAST',
+        'description': 'Maximum Speed',
+        'emoji': '🚀'
+    }
+}
 
 # ========================================
 # 📁 FILES
@@ -49,10 +81,9 @@ MAX_APIS_PER_BOMB = 300
 DB_NAME = 'bomber.db'
 SERVICES_FILE = 'services.json'
 
-# ========================================
-# ⚠️ CHECK
-# ========================================
 if not BOT_TOKEN:
-    raise ValueError("❌ BOT_TOKEN not found in .env file!")
+    raise ValueError("❌ BOT_TOKEN not found!")
 
-print("✅ Configuration loaded successfully!")
+print("✅ Configuration loaded!")
+print("💰 Pricing: 200→2 | 500→5 | Unlimited→8")
+print("⚡ Speed: 🐢 SLOW | ⚡ MEDIUM | 🚀 FAST")

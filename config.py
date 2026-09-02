@@ -4,7 +4,7 @@
 # ========================================
 # 🔐 TELEGRAM BOT TOKEN
 # ========================================
-BOT_TOKEN = "8996694548:AAF0ZA36jaUDkbkrKpcbqjxuppiX3YyyseY"
+BOT_TOKEN = "8996694548:AAHivWCaOD9tkzjpXWRsubgg1vYXVR7_Py8"
 
 # ========================================
 # 👑 MULTIPLE ADMIN IDs (LIST)

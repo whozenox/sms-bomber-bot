@@ -8,7 +8,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 # ========== CONFIG ==========
-BOT_TOKEN = "8996694548:AAF0ZA36jaUDkbkrKpcbqjxuppiX3YyyseY"
+BOT_TOKEN = "8996694548:AAHivWCaOD9tkzjpXWRsubgg1vYXVR7_Py8"
 ADMIN_ID = 8112149031
 OWNER = "@lordzenox"
 CHANNEL1 = "@zenoxtool"
